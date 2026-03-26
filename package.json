@@ -1,0 +1,82 @@
+{
+  "name": "ai-code-complete",
+  "displayName": "AI-code-complete",
+  "description": "AI code complete",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ai-code-complete.rebuildIndex",
+        "title": "AI Code Complete: Rebuild Workspace Index"
+      }
+    ],
+    "configuration": {
+      "title": "AI Code Complete",
+      "properties": {
+        "aiCodeComplete.include": {
+          "type": "string",
+          "default": "**/*.{js,jsx,ts,tsx,py,go,java,cpp,c,h,cs,php,rb,rs,swift,kt,m,mm,scala,sql,md,json,yaml,yml}",
+          "description": "Glob pattern for files to include in indexing."
+        },
+        "aiCodeComplete.exclude": {
+          "type": "string",
+          "default": "**/{node_modules,.git,dist,build,out,.next,.venv,venv,target,coverage}/**",
+          "description": "Glob pattern for files to exclude from indexing."
+        },
+        "aiCodeComplete.maxFiles": {
+          "type": "number",
+          "default": 300,
+          "minimum": 10,
+          "description": "Maximum number of files indexed from workspace."
+        },
+        "aiCodeComplete.maxSuggestions": {
+          "type": "number",
+          "default": 40,
+          "minimum": 5,
+          "description": "Maximum completion candidates returned per request."
+        },
+        "aiCodeComplete.maxTokenLength": {
+          "type": "number",
+          "default": 48,
+          "minimum": 8,
+          "description": "Longest token length accepted while indexing."
+        },
+        "aiCodeComplete.maxFileSizeKB": {
+          "type": "number",
+          "default": 256,
+          "minimum": 16,
+          "description": "Skip files larger than this size during indexing."
+        },
+        "aiCodeComplete.enableLogging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable verbose logs in Output panel (AI Code Complete channel)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "eslint": "^9.39.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
