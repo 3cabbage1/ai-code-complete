@@ -53,7 +53,7 @@ class projectParser(object):
     """
     def __init__(self):
         self.py_parser = PythonParser()
-        self.iden_pattern = re.compile(r'[^\w\-]')
+        self.iden_pattern = re.compile(r'[^\w\-\.]')
 
         self.proj_searcher = projectSearcher()
 

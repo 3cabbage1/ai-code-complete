@@ -20,6 +20,14 @@
         "title": "AI Code Complete: Rebuild Workspace Index"
       }
     ],
+    "keybindings": [
+      {
+        "command": "ai-code-complete.rebuildIndex",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorTextFocus"
+      }
+    ],
     "configuration": {
       "title": "AI Code Complete",
       "properties": {

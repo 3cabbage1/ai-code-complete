@@ -62,15 +62,23 @@ class Generator(object):
         info_file = os.path.join(self.info_dir, f'{project}.json')
         if not os.path.isfile(info_file):
             print(f'Unknown package {project} in {self.info_dir}')
+            print(f'Looking for file: {info_file}')
+            print(f'Available files in {self.info_dir}: {os.listdir(self.info_dir) if os.path.exists(self.info_dir) else "directory not found"}')
             return
         
         self.project = project
         with open(info_file, 'r') as f:
             self.proj_info = json.load(f)
+        print(f'Loaded project info for {project} with {len(self.proj_info)} modules')
     
 
     def set_pyfile(self, project, fpath):
+        print(f'set_pyfile called: project={project}, fpath={fpath}')
         self._set_project(project)
+        
+        if self.proj_info is None:
+            print(f'ERROR: proj_info is None after _set_project')
+            return
         
         # remove current file
         if fpath in self.proj_info:
@@ -78,11 +86,19 @@ class Generator(object):
         else:
             proj_info = self.proj_info
         
+        print(f'proj_info keys: {list(proj_info.keys())}')
+        print(f'fpath in proj_info: {fpath in proj_info}')
+        
         dir_path = os.path.join(self.proj_dir, project)
+        print(f'dir_path: {dir_path}')
         if os.path.isdir(dir_path):
             content = list(os.listdir(dir_path))
+            print(f'dir content: {content}')
             if len(content) == 1:
                 dir_path = os.path.join(dir_path, content[0])
+                print(f'updated dir_path: {dir_path}')
+        else:
+            print(f'dir_path does not exist or is not a directory')
         
         self.searcher.set_proj(dir_path, proj_info)
     

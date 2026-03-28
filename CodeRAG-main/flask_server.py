@@ -14,7 +14,9 @@ from coderag.config import settings
 from coderag.build_query.build_query import build_query_by_last_k_lines
 from coderag.retrieve.dataflow_retrieve import DataflowRetriever
 from coderag.build_prompt.merge_retrieval import get_tokenizer, merge_retrieval
-from coderag.static_analysis.data_flow.preprocess import generate_context_graph
+# 直接使用 projectParser 解析当前项目，绕过 generate_context_graph
+from coderag.static_analysis.data_flow.preprocess import projectParser
+
 
 
 app = Flask(__name__)
@@ -46,9 +48,9 @@ def ensure_retriever(workspace_path: str, force_rebuild: bool = False) -> Datafl
     workspace = Path(workspace_path).resolve()
     if not workspace.exists():
         raise FileNotFoundError(f"workspace not found: {workspace}")
-
-    project_name = workspace.name
-    projs_dir = workspace.parent
+    # workspace:当前打开的目录
+    project_name = workspace.name 
+    projs_dir = workspace.parent #当前目录父目录
     cache_dir = workspace / ".ai-code-complete" / "dataflow-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -58,22 +60,88 @@ def ensure_retriever(workspace_path: str, force_rebuild: bool = False) -> Datafl
         and STATE.get("workspace_path") == str(workspace)
         and not force_rebuild
     ):
+        logger.info("=" * 80)
+        logger.info("USING CACHED RETRIEVER")
+        logger.info(f"Workspace path: {STATE.get('workspace_path')}")
+        logger.info(f"Project name: {STATE.get('project_name')}")
+        logger.info("=" * 80)
         return retriever
 
     cache_has_project = (cache_dir / f"{project_name}.json").exists()
     if force_rebuild or not cache_has_project:
         # Only generate current project graph, avoid scanning all siblings.
         if force_rebuild:
+            logger.info(f"Cache directory: {cache_dir}")
             for p in cache_dir.iterdir():
                 try:
                     p.unlink()
-                except Exception:
-                    pass
-        generate_context_graph(
-            pkg_list=[project_name],
-            ds_repo_dir=projs_dir,
-            ds_graph_dir=cache_dir,
-        )
+                except Exception as e:
+                    logger.warning(f"Failed to delete {p.name}: {e}")
+            logger.info("Cache directory cleared")
+            logger.info("=" * 80)
+        
+        logger.info("=" * 80)
+        logger.info("GENERATING CONTEXT GRAPH")
+        logger.info(f"Project name: {project_name}")
+        logger.info(f"Workspace path: {workspace}")
+        logger.info(f"Cache directory: {cache_dir}")
+        logger.info("=" * 80)
+        
+        
+        # project_parser = projectParser()
+        # logger.info(f"Parsing project directory: {workspace}")
+        # info = project_parser.parse_dir(str(workspace))
+        # logger.info("=" * 80)
+        # logger.info(f"info: {info}")
+        # logger.info(f"Parsed info keys: {list(info.keys()) if info else 'empty'}")
+        project_parser = projectParser()
+        dir_path=workspace
+        if dir_path.is_dir():
+            content = list(dir_path.iterdir())
+            if len(content) > 1:
+                info = project_parser.parse_dir(str(dir_path))
+                logger.info("#" * 80)
+                logger.info(f"dir_path: {str(dir_path)}")
+                logger.info(f"len(content) > 1:\ninfo: {info}")
+                logger.info("#" * 80)
+            else:
+                # package/package-version/
+                dist_path = content[0]
+                info = project_parser.parse_dir(str(dist_path))
+            cache_file = cache_dir / f"{project_name}.json"
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(info, f)
+
+
+
+        # 打印生成的 JSON 内容（限制大小）
+        json_content = json.dumps(info, ensure_ascii=False, indent=2)
+        max_json_length = 10000  # 限制日志长度
+        if len(json_content) > max_json_length:
+            logger.info(f"Generated JSON content (truncated): {json_content[:max_json_length]}...")
+            logger.info(f"Total JSON size: {len(json_content)} characters")
+        else:
+            logger.info(f"Generated JSON content: {json_content}")
+        
+        # # 保存到缓存
+        # cache_file = cache_dir / f"{project_name}.json"
+        # with open(cache_file, 'w', encoding='utf-8') as f:
+        #     json.dump(info, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Context graph saved to: {cache_file}")
+        logger.info(f"File size: {cache_file.stat().st_size if cache_file.exists() else 0} bytes")
+        
+        logger.info("=" * 80)
+        logger.info("CONTEXT GRAPH GENERATION COMPLETED")
+        logger.info("=" * 80)
+        logger.info(f"Cache file: {cache_file}")
+        logger.info("=" * 80)
+    else:
+        logger.info("=" * 80)
+        logger.info("USING CACHED CONTEXT GRAPH")
+        logger.info("=" * 80)
+        logger.info(f"Cache file: {cache_dir / f'{project_name}.json'}")
+        logger.info("=" * 80)
 
     retriever = DataflowRetriever(
         projs_dir=projs_dir,
@@ -85,6 +153,14 @@ def ensure_retriever(workspace_path: str, force_rebuild: bool = False) -> Datafl
     STATE["project_name"] = project_name
     STATE["retriever"] = retriever
     STATE["cache_dir"] = str(cache_dir)
+    
+    logger.info("=" * 80)
+    logger.info("RETRIEVER CREATED AND CACHED")
+    logger.info(f"Workspace path: {STATE.get('workspace_path')}")
+    logger.info(f"Project name: {STATE.get('project_name')}")
+    logger.info(f"Cache directory: {STATE.get('cache_dir')}")
+    logger.info("=" * 80)
+    
     return retriever
 
 
@@ -227,17 +303,34 @@ def index_workspace() -> Any:
     if not workspace_path:
         return jsonify({"ok": False, "error": "workspace_path is required"}), 400
 
+    logger.info("=" * 80)
+    logger.info("INDEX WORKSPACE REQUEST RECEIVED")
+    logger.info(f"Workspace path: {workspace_path}")
+    logger.info(f"Force rebuild: {force_rebuild}")
+    logger.info("=" * 80)
+
     try:
-        ensure_retriever(workspace_path, force_rebuild=force_rebuild)
+        logger.info("Starting to ensure retriever...")
+        retriever = ensure_retriever(workspace_path, force_rebuild=force_rebuild)
+        
+        logger.info("=" * 80)
+        logger.info("INDEX WORKSPACE COMPLETED SUCCESSFULLY")
+        logger.info(f"Cache directory: {STATE.get('cache_dir')}")
+        logger.info("=" * 80)
+        
         return jsonify(
             {
                 "ok": True,
                 "workspace_path": STATE.get("workspace_path"),
                 "project_name": STATE.get("project_name"),
-                "cache_dir": STATE.get("cache_dir"),
+                "cache_dir": STATE.get('cache_dir'),
             }
         )
     except Exception as exc:  # noqa: BLE001
+        logger.info("=" * 80)
+        logger.info("INDEX WORKSPACE FAILED")
+        logger.info(f"Error: {str(exc)}")
+        logger.info("=" * 80)
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
@@ -277,6 +370,16 @@ def suggest() -> Any:
         source_code_prefix = f"# {rel_file_norm}"
         tokenizer = get_tokenizer(settings.build_prompt.tokenizer_path_or_name)
 
+        logger.info("=" * 80)
+        logger.info("DATAFLOW RETRIEVAL DEBUG INFO:")
+        logger.info("=" * 80)
+        logger.info(f"Project name: {project_name}")
+        logger.info(f"File path (abs): {file_path_abs}")
+        logger.info(f"File path (rel): {rel_file}")
+        logger.info(f"File path (norm): {rel_file_norm}")
+        logger.info(f"Source code length: {len(query)} chars")
+        logger.info("=" * 80)
+
         def calc_truncated(retrieval_infos: list[str]) -> bool:
             # merge_retrieval returns: (prompt, source_code_truncated, retrieval_truncated)
             return merge_retrieval(
@@ -286,12 +389,14 @@ def suggest() -> Any:
                 tokenizer=tokenizer,
             )[1]
 
+        logger.info("Starting dataflow retrieval...")
         prompt_list = retriever.retrieve(
             project_name=project_name,
             fpath=Path(file_path_abs),
             source_code=query,
             calc_truncated=calc_truncated,
         )
+        logger.info(f"Dataflow retrieval completed. Retrieved {len(prompt_list or [])} contexts.")
 
         logger.info("=" * 80)
         logger.info(f"RETRIEVED CONTEXTS (count: {len(prompt_list or [])}):")

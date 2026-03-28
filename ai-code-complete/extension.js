@@ -449,13 +449,22 @@ function activate(context) {
 	const syncBackendIndex = async (forceRebuild = false) => {
 		const config = getConfig();
 		if (!config.backendEnabled) {
+			logger.info('Backend index sync skipped: backend is disabled.');
 			return;
 		}
 		const folders = vscode.workspace.workspaceFolders || [];
 		const first = folders[0];
 		if (!first) {
+			logger.info('Backend index sync failed: no workspace folder found.');
 			return;
 		}
+		
+		logger.info('='.repeat(80));
+		logger.info('STARTING BACKEND INDEX SYNC');
+		logger.info(`Force rebuild: ${forceRebuild}`);
+
+		logger.info('='.repeat(80));
+		
 		const response = await postJsonWithTimeout(
 			config.backendIndexUrl,
 			{
@@ -464,15 +473,44 @@ function activate(context) {
 			},
 			config.backendRequestTimeoutMs
 		);
+		
+		logger.info('='.repeat(80));
+		logger.info('BACKEND INDEX SYNC RESPONSE');
+		logger.info('='.repeat(80));
+		logger.info(`Response OK: ${response.ok}`);
+		
 		if (!response.ok || !response.payload?.ok) {
 			logger.info(`Backend index sync failed: ${response.payload?.error || `http ${response.status}`}`);
 			return;
 		}
-		logger.info(`Backend index synced: ${response.payload.project_name}`);
+		
+		logger.info(`Backend index synced successfully`);
+		logger.info(`Project name: ${response.payload.project_name}`);
+		logger.info(`Cache directory: ${response.payload.cache_dir}`);
+		
+		// 打印后端返回的完整 JSON 响应（限制大小）
+		const jsonResponse = JSON.stringify(response.payload, null, 2);
+		const maxJsonLength = 5000; // 限制日志长度
+		if (jsonResponse.length > maxJsonLength) {
+			logger.info(`Backend response JSON (truncated): ${jsonResponse.substring(0, maxJsonLength)}...`);
+			logger.info(`Total JSON size: ${jsonResponse.length} characters`);
+		} else {
+			logger.info(`Backend response JSON: ${jsonResponse}`);
+		}
+		
+		logger.info('='.repeat(80));
 	};
 
 	const refreshIndexCommand = vscode.commands.registerCommand('ai-code-complete.rebuildIndex', async () => {
-		logger.info('Manual rebuild command triggered.');
+		logger.info('='.repeat(80));
+		logger.info('MANUAL REBUILD COMMAND TRIGGERED');
+		logger.info('='.repeat(80));
+		logger.info(`Triggered by: Keyboard shortcut (Ctrl+Shift+R / Cmd+Shift+R)`);
+		logger.info(`Timestamp: ${new Date().toISOString()}`);
+		logger.info('='.repeat(80));
+		
+		const startTime = Date.now();
+		
 		await vscode.window.withProgress(
 			{ location: vscode.ProgressLocation.Notification, title: 'AI Code Complete: rebuilding index...' },
 			async () => {
@@ -540,7 +578,7 @@ function activate(context) {
 					}
 
 					// 尝试短等待：如果后端足够快，则把 LM 项也放进 Ctrl+Space 列表
-					const fastTimeoutMs = 1200;
+					const fastTimeoutMs = 3000;
 					let lmTextFast = '';
 					let timedOut = true;
 					await Promise.race([
