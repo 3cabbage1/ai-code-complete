@@ -18,14 +18,53 @@
       {
         "command": "ai-code-complete.rebuildIndex",
         "title": "AI Code Complete: Rebuild Workspace Index"
+      },
+      {
+        "command": "ai-code-complete.applyCompletion",
+        "title": "Apply Completion (ai-code-complete)",
+        "icon": "$(check)"
+      },
+      {
+        "command": "ai-code-complete.viewContext",
+        "title": "View Context (ai-code-complete)",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "ai-code-complete.cancelCompletion",
+        "title": "Cancel (ai-code-complete)",
+        "icon": "$(close)"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ai-code-complete.applyCompletion",
+          "when": "editorTextFocus && ai-code-complete.hasSuggestion",
+          "group": "ai-code-complete@1"
+        },
+        {
+          "command": "ai-code-complete.viewContext",
+          "when": "editorTextFocus && ai-code-complete.hasSuggestion",
+          "group": "ai-code-complete@2"
+        },
+        {
+          "command": "ai-code-complete.cancelCompletion",
+          "when": "editorTextFocus && ai-code-complete.hasSuggestion",
+          "group": "ai-code-complete@3"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "ai-code-complete.rebuildIndex",
         "key": "ctrl+shift+r",
         "mac": "cmd+shift+r",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "ai-code-complete.tabKey",
+        "key": "tab",
+        "when": "editorTextFocus && ai-code-complete.hasSuggestion"
       }
     ],
     "configuration": {

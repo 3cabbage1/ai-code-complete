@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -264,6 +265,7 @@ def normalize_prompt(p: Any) -> str:
 
 @torch.no_grad()
 def local_infer_completion(prompt: str, max_tokens: int | None = None) -> str:
+    start_time = time.time()
     model, tokenizer, device, stopping_criteria = ensure_lm_loaded()
     normalized = normalize_prompt(prompt)
 
@@ -287,6 +289,8 @@ def local_infer_completion(prompt: str, max_tokens: int | None = None) -> str:
     prompt_len = inputs["input_ids"].shape[-1]
     gen_ids = output_ids[0][prompt_len:]
     result_text = tokenizer.decode(gen_ids, skip_special_tokens=True)
+    end_time = time.time()
+    logger.info(f"Inference completed in {end_time - start_time:.2f} seconds using {device.type}")
     return result_text
 
 

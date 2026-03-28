@@ -551,12 +551,14 @@ function activate(context) {
 				});
 
 				// Ctrl+Space / 手动触发时，优先尝试生成 LM 补全并展示
-				if (completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke) {
-					const requestKey = `${document.uri.toString()}::${position.line}:${position.character}`;
+					if (completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke) {
+						const requestKey = `${document.uri.toString()}::${position.line}:${position.character}`;
 
-					// 后端推理可能很慢（CPU 上 codegen-350M 常见 >20s），不要阻塞建议 UI。
-					if (!inFlightBackend.has(requestKey)) {
+						// 后端推理可能很慢（CPU 上 codegen-350M 常见 >20s），不要阻塞建议 UI。
+						// 即使有相同位置的请求在处理中，也允许新的请求触发
+						// 这样用户可以连续调用代码补全功能
 						const p = (async () => {
+							logger.info(`Starting new backend completion request: ${requestKey}`);
 							const backendResult = await suggestViaBackend(document, position, config, logger);
 							if (backendResult.error) {
 								logger.info(`Backend suggest failed: ${backendResult.error}`);
@@ -566,54 +568,56 @@ function activate(context) {
 							const lmLen = lmText?.length || 0;
 							logger.info(`Backend completion received (background). chars=${lmLen}`);
 							if (lmLen > 0) {
-								inlineCache.set(requestKey, lmText);
-								logger.info(`LM completion ready (background). chars=${lmLen} contexts=${backendResult.contexts.length}`);
-								// 触发 inline suggestion，让 Tab 可直接接受
-								void vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
-							}
+						inlineCache.set(requestKey, lmText);
+						logger.info(`LM completion ready (background). chars=${lmLen} contexts=${backendResult.contexts.length}`);
+						// 显示补全选择对话框
+						void showCompletionDialog(document, position, lmText, backendResult.contexts);
+					}
 						})().finally(() => {
+							// 无论成功失败，都从缓存中删除
 							inFlightBackend.delete(requestKey);
+							logger.info(`Backend request completed and removed from cache: ${requestKey}`);
 						});
+						// 立即添加到缓存，避免重复处理
 						inFlightBackend.set(requestKey, p);
-					}
 
-					// 尝试短等待：如果后端足够快，则把 LM 项也放进 Ctrl+Space 列表
-					const fastTimeoutMs = 3000;
-					let lmTextFast = '';
-					let timedOut = true;
-					await Promise.race([
-						inFlightBackend.get(requestKey).then(() => {
-							timedOut = false;
-							lmTextFast = inlineCache.get(requestKey) || '';
-						}),
-						new Promise((resolve) => setTimeout(resolve, fastTimeoutMs))
-					]);
+						// 尝试短等待：如果后端足够快，则把 LM 项也放进 Ctrl+Space 列表
+						const fastTimeoutMs = 3000;
+						let lmTextFast = '';
+						let timedOut = true;
+						await Promise.race([
+							inFlightBackend.get(requestKey).then(() => {
+								timedOut = false;
+								lmTextFast = inlineCache.get(requestKey) || '';
+							}),
+							new Promise((resolve) => setTimeout(resolve, fastTimeoutMs))
+						]);
 
-					if (!timedOut && lmTextFast.length === 0) {
-						logger.info('Backend finished quickly, but completion was empty.');
-					}
+						if (!timedOut && lmTextFast.length === 0) {
+							logger.info('Backend finished quickly, but completion was empty.');
+						}
 
-					if (lmTextFast) {
-						const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
-						lmItem.sortText = '0000';
-						lmItem.insertText = lmTextFast;
-						lmItem.detail = 'Generated from backend (dataflow) context';
-						lmItem.documentation = new vscode.MarkdownString([
-							'**Dataflow Retrieved Context**',
-							'',
-							'```',
-							buildContextBlock(snippets).slice(0, 4000),
-							'```',
-							'',
-							'**Inferred completion**',
-							'',
-							'```',
-							lmTextFast,
-							'```'
-						].join('\n'));
-						result.unshift(lmItem);
+						if (lmTextFast) {
+							const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
+							lmItem.sortText = '0000';
+							lmItem.insertText = lmTextFast;
+							lmItem.detail = 'Generated from backend (dataflow) context';
+							lmItem.documentation = new vscode.MarkdownString([
+								'**Dataflow Retrieved Context**',
+								'',
+								'```',
+								buildContextBlock(snippets).slice(0, 4000),
+								'```',
+								'',
+								'**Inferred completion**',
+								'',
+								'```',
+								lmTextFast,
+								'```'
+							].join('\n'));
+							result.unshift(lmItem);
+						}
 					}
-				}
 
 				return result;
 			}
@@ -660,7 +664,213 @@ function activate(context) {
 		}
 	});
 
-	context.subscriptions.push(refreshIndexCommand, provider, inlineProvider, onSave, onDelete, onConfigChanged, logger.output);
+	// 监听文档内容改变，当用户手动更改代码时清除预览
+	const onDocumentChange = vscode.workspace.onDidChangeTextDocument((event) => {
+		// 检查是否有活动的建议
+		if (completionSuggestions.size === 0) return;
+
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) return;
+
+		// 检查是否是当前活动编辑器的文档改变
+		const documentUri = editor.document.uri.toString();
+		if (event.document.uri.toString() !== documentUri) return;
+
+		// 检查改变的内容是否是用户输入（通过 contentChanges）
+		if (event.contentChanges.length > 0) {
+			// 用户手动更改了代码，清除预览
+			logger.info('Document content changed, clearing completion previews');
+			clearAllPreviews();
+		}
+	});
+
+	// 补全建议数据存储
+	const completionSuggestions = new Map();
+
+	// 存储装饰器，用于清除预览
+	const decorationTypes = new Map();
+
+	// 设置上下文变量，用于控制 Tab 键行为
+	vscode.commands.executeCommand('setContext', 'ai-code-complete.hasSuggestion', false);
+
+	// 清除所有预览装饰器和建议的辅助函数
+	const clearAllPreviews = () => {
+		// 清除所有装饰器
+		for (const [key, { decorationType, editor }] of decorationTypes.entries()) {
+			editor.setDecorations(decorationType, []);
+			decorationType.dispose();
+		}
+		decorationTypes.clear();
+
+		// 清除所有建议
+		completionSuggestions.clear();
+
+		// 重置上下文变量
+		vscode.commands.executeCommand('setContext', 'ai-code-complete.hasSuggestion', false);
+	};
+
+	// 注册命令 - 使用当前光标位置
+	const applyCompletionCommand = vscode.commands.registerCommand('ai-code-complete.applyCompletion', async () => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) return;
+
+		const position = editor.selection.active;
+		const key = `${editor.document.uri.toString()}`;
+		const suggestions = completionSuggestions.get(key) || [];
+		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
+
+		if (suggestion) {
+			await editor.edit(editBuilder => {
+				editBuilder.insert(position, suggestion.completion);
+			});
+			logger.info('Completion applied by user');
+
+			// 清除所有预览装饰器和建议
+			clearAllPreviews();
+		}
+	});
+
+	// Tab 键按下时自动应用补全
+	const tabKeyHandler = vscode.commands.registerCommand('ai-code-complete.tabKey', async () => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			return vscode.commands.executeCommand('tab');
+		}
+
+		const position = editor.selection.active;
+		const key = `${editor.document.uri.toString()}`;
+		const suggestions = completionSuggestions.get(key) || [];
+		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
+
+		if (suggestion) {
+			// 应用补全
+			await editor.edit(editBuilder => {
+				editBuilder.insert(position, suggestion.completion);
+			});
+			logger.info('Completion applied via Tab key');
+
+			// 清除所有预览装饰器和建议
+			clearAllPreviews();
+		} else {
+			// 如果没有补全建议，执行默认的 Tab 行为
+			return vscode.commands.executeCommand('tab');
+		}
+	});
+
+	const viewContextCommand = vscode.commands.registerCommand('ai-code-complete.viewContext', () => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) return;
+
+		const position = editor.selection.active;
+		const key = `${editor.document.uri.toString()}`;
+		const suggestions = completionSuggestions.get(key) || [];
+		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
+
+		if (suggestion) {
+			const contextText = suggestion.contexts.map((ctx, idx) => `--- Context ${idx + 1} ---
+${ctx}`).join('\n\n');
+			const panel = vscode.window.createWebviewPanel(
+				'codeCompleteContext',
+				'AI Code Complete Context',
+				vscode.ViewColumn.Beside,
+				{ enableScripts: false }
+			);
+			panel.webview.html = `
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<meta charset="UTF-8">
+					<title>AI Code Complete Context</title>
+					<style>
+						body { font-family: monospace; white-space: pre-wrap; padding: 10px; }
+						.context { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+					</style>
+				</head>
+				<body>
+					<h2>Context Used for Completion</h2>
+					${contextText.replace(/\n/g, '<br>')}
+				</body>
+				</html>
+			`;
+			logger.info('Context view opened by user');
+		}
+	});
+
+	const cancelCompletionCommand = vscode.commands.registerCommand('ai-code-complete.cancelCompletion', () => {
+		// 清除所有预览装饰器和建议
+		clearAllPreviews();
+		logger.info('Completion cancelled by user');
+	});
+
+	// 显示补全建议
+	const showCompletionDialog = async (document, position, completionText, contexts) => {
+		const key = `${document.uri.toString()}`;
+		const suggestions = completionSuggestions.get(key) || [];
+
+		// 添加新的补全建议
+		suggestions.push({
+			line: position.line,
+			character: position.character,
+			completion: completionText,
+			contexts: contexts
+		});
+
+		completionSuggestions.set(key, suggestions);
+
+		// 设置上下文变量，表示有活动的建议
+		vscode.commands.executeCommand('setContext', 'ai-code-complete.hasSuggestion', true);
+
+		// 在光标上方显示补全代码预览
+		const editor = vscode.window.activeTextEditor;
+		if (editor) {
+			// 创建一个临时的装饰器来显示补全预览
+			const decorationType = vscode.window.createTextEditorDecorationType({
+				before: {
+					contentText: completionText,
+					color: '#888888',
+					fontStyle: 'italic'
+				},
+				rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
+			});
+
+			const decorations = [{
+				range: new vscode.Range(position, position),
+				hoverMessage: 'AI Code Complete Suggestion'
+			}];
+
+			editor.setDecorations(decorationType, decorations);
+
+			// 保存装饰器，用于后续清除
+			const suggestionKey = `${position.line}:${position.character}`;
+			decorationTypes.set(`${key}:${suggestionKey}`, { decorationType, editor });
+
+			// 30秒后自动清理装饰器
+			setTimeout(() => {
+				const saved = decorationTypes.get(`${key}:${suggestionKey}`);
+				if (saved) {
+					saved.editor.setDecorations(saved.decorationType, []);
+					saved.decorationType.dispose();
+					decorationTypes.delete(`${key}:${suggestionKey}`);
+				}
+			}, 30000);
+		}
+
+		logger.info('Completion suggestion displayed');
+	};
+
+	context.subscriptions.push(
+		refreshIndexCommand, 
+		provider, 
+		applyCompletionCommand,
+		viewContextCommand,
+		cancelCompletionCommand,
+		tabKeyHandler,
+		onSave, 
+		onDelete, 
+		onConfigChanged, 
+		onDocumentChange,
+		logger.output
+	);
 
 	void tokenIndex.rebuild(logger);
 	void syncBackendIndex(false);
