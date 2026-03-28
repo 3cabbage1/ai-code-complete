@@ -1,0 +1,44 @@
+# sample_n = 100 # max 6461, 2665 or None for all
+log_level = "DEBUG"
+
+[benchmark]
+name = "recceval"
+repos_path = "cache/benchmark/ReccEval/Source_Code"
+meta_data_path = "cache/benchmark/ReccEval/metadata.jsonl"
+
+[query]
+model_max_token_n = 2048
+logits_token_n = 5
+chunk_size = 3
+model_name_or_path = "nomic-ai/CodeRankEmbed"
+output_file = "cache/recceval/query/full-last_k-m2048-n5-c3.json"
+method = "last_k"
+lask_k = 10
+
+[retrieve]
+use_query_file = "cache/recceval/query/full-last_k-m2048-n5-c3.json"
+output_file = "cache/recceval/retrieve/full-last_k-m2048-n5-c3-dataflow-max2000.json"
+
+[retrieve.dataflow]
+enable = true
+graph_use_cache = false
+graph_cache_dir = "cache/recceval/dataflow/graphs"
+
+[build_prompt]
+use_retrieval = true
+use_retrieve_file = "cache/recceval/retrieve/full-last_k-m2048-n5-c3-dataflow-max2000.json"
+output_file = "cache/recceval/prompt/recceval-token_num5-top_k1_chunk_size3-dataflow-max2000-codegen-350M-mono.json"
+max_token_n = 2000
+tokenizer_path_or_name = "Salesforce/codegen-350M-mono"
+
+[inference]
+use_prompt_file = "cache/recceval/prompt/recceval-token_num5-top_k1_chunk_size3-dataflow-max2000-codegen-350M-mono.json"
+output_file = "cache/recceval/inference/recceval-token_num5-top_k1_chunk_size3-dataflow-max2000-codegen-350M-mono.json"
+max_tokens = 48
+api_url = "http://10.24.24.24:8000/v1"
+api_key = "sk-xxx"
+model = "Salesforce/codegen-350M-mono"
+
+[evaluation]
+use_inference_file = "cache/recceval/inference/recceval-token_num5-top_k1_chunk_size3-dataflow-max2000-codegen-350M-mono.json"
+output_file = "cache/recceval/evaluation/recceval-token_num5-top_k1_chunk_size3-dataflow-max2000-codegen-350M-mono.json"

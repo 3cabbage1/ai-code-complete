@@ -57,6 +57,65 @@
           "minimum": 16,
           "description": "Skip files larger than this size during indexing."
         },
+        "aiCodeComplete.dataflowTopK": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Top-K retrieved snippets from dataflow context."
+        },
+        "aiCodeComplete.dataflowContextLines": {
+          "type": "number",
+          "default": 120,
+          "minimum": 20,
+          "description": "How many lines before cursor are used to build dataflow query context."
+        },
+        "aiCodeComplete.enableLmCompletion": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable LM inference completion on manual invoke (Ctrl+Space)."
+        },
+        "aiCodeComplete.lmApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for LM completion. If empty, OPENAI_API_KEY env will be used."
+        },
+        "aiCodeComplete.lmBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1/chat/completions",
+          "description": "Chat completion endpoint URL."
+        },
+        "aiCodeComplete.lmModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name used for LM completion."
+        },
+        "aiCodeComplete.lmMaxTokens": {
+          "type": "number",
+          "default": 192,
+          "minimum": 32,
+          "description": "Maximum tokens for LM completion output."
+        },
+        "aiCodeComplete.backendEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use external Flask backend (CodeRAG) for retrieval and completion."
+        },
+        "aiCodeComplete.backendSuggestUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:5050/suggest",
+          "description": "Flask backend suggest endpoint URL."
+        },
+        "aiCodeComplete.backendIndexUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:5050/index",
+          "description": "Flask backend index endpoint URL."
+        },
+        "aiCodeComplete.backendRequestTimeoutMs": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 1000,
+          "description": "Timeout in milliseconds for backend requests."
+        },
         "aiCodeComplete.enableLogging": {
           "type": "boolean",
           "default": true,
