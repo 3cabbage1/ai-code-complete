@@ -510,7 +510,6 @@ function activate(context) {
 				return;
 			}
 
-			void vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
 			void showCompletionDialog(editor.document, position, lmText, backendResult.contexts);
 		})().finally(() => {
 			const cur = inFlightByEditor.get(editorId);
@@ -536,15 +535,15 @@ function activate(context) {
 	});
 
 	const triggerCompletionCommand = vscode.commands.registerCommand('ai-code-complete.triggerCompletion', async () => {
-		logger.info('Crtl+Shift+Space Trigger!');
+		logger.info('Crtl+Alt+t Trigger!');
 		const editor = vscode.window.activeTextEditor;
 		if (!editor) {
 			return;
 		}
-		logger.info('Crtl+Shift+Space Start');
+		logger.info('Crtl+Alt+t Start');
 		const pos = editor.selection.active;
 		startCancelableBackendCompletion(editor, pos, 'manualHotkey');
-		logger.info('Crtl+Shift+Space Completed!');
+		logger.info('Crtl+Alt+t Completed!');
 		// await vscode.commands.executeCommand('editor.action.triggerSuggest');
 	});
 
@@ -651,36 +650,37 @@ function activate(context) {
 					return item;
 				});
 
-				// Ctrl+Space / 手动触发时：发起“可取消”的后端补全请求（光标移动则自动取消并重启）
+				// 手动触发时：发起“可取消”的后端补全请求（光标移动则自动取消并重启）
 				if (completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke) {
+					logger.info('Crtl+Space Invoke!');
 					const editor = vscode.window.activeTextEditor;
 					if (editor && editor.document.uri.toString() === document.uri.toString()) {
 						startCancelableBackendCompletion(editor, position, 'ctrlSpaceInvoke');
 					}
 
 					// 如果当前光标位置已有缓存结果，则直接把 LM 项放进列表（无需等待后端）
-					const requestKey = makeRequestKey(document.uri, position);
-					const cached = inlineCache.get(requestKey) || '';
-					if (cached) {
-						const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
-						lmItem.sortText = '0000';
-						lmItem.insertText = cached;
-						lmItem.detail = 'Generated from backend (dataflow) context';
-						lmItem.documentation = new vscode.MarkdownString([
-							'**Dataflow Retrieved Context**',
-							'',
-							'```',
-							buildContextBlock(snippets).slice(0, 4000),
-							'```',
-							'',
-							'**Inferred completion**',
-							'',
-							'```',
-							cached,
-							'```'
-						].join('\n'));
-						result.unshift(lmItem);
-					}
+					// const requestKey = makeRequestKey(document.uri, position);
+					// const cached = inlineCache.get(requestKey) || '';
+					// if (cached) {
+					// 	const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
+					// 	lmItem.sortText = '0000';
+					// 	lmItem.insertText = cached;
+					// 	lmItem.detail = 'Generated from backend (dataflow) context';
+					// 	lmItem.documentation = new vscode.MarkdownString([
+					// 		'**Dataflow Retrieved Context**',
+					// 		'',
+					// 		'```',
+					// 		buildContextBlock(snippets).slice(0, 4000),
+					// 		'```',
+					// 		'',
+					// 		'**Inferred completion**',
+					// 		'',
+					// 		'```',
+					// 		cached,
+					// 		'```'
+					// 	].join('\n'));
+					// 	result.unshift(lmItem);
+					// }
 				}
 
 				return result;

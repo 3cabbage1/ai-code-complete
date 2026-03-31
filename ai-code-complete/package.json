@@ -67,12 +67,7 @@
       },
       {
         "command": "ai-code-complete.triggerCompletion",
-        "key": "ctrl+alt+space",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "ai-code-complete.triggerCompletion",
-        "key": "ctrl+shift+space",
+        "key": "ctrl+alt+t",
         "when": "editorTextFocus"
       },
       {
