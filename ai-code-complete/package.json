@@ -20,6 +20,10 @@
         "title": "AI Code Complete: Rebuild Workspace Index"
       },
       {
+        "command": "ai-code-complete.triggerCompletion",
+        "title": "AI Code Complete: Trigger Completion"
+      },
+      {
         "command": "ai-code-complete.applyCompletion",
         "title": "Apply Completion (ai-code-complete)",
         "icon": "$(check)"
@@ -59,6 +63,16 @@
         "command": "ai-code-complete.rebuildIndex",
         "key": "ctrl+shift+r",
         "mac": "cmd+shift+r",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ai-code-complete.triggerCompletion",
+        "key": "ctrl+alt+space",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ai-code-complete.triggerCompletion",
+        "key": "ctrl+shift+space",
         "when": "editorTextFocus"
       },
       {

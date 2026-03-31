@@ -350,8 +350,16 @@ function buildContextBlock(snippets) {
 	return snippets.map((snippet) => `[${snippet.filePath}:${snippet.line}] ${snippet.text}`).join('\n');
 }
 
-async function postJsonWithTimeout(url, body, timeoutMs) {
+async function postJsonWithTimeout(url, body, timeoutMs, abortSignal) {
 	const controller = new AbortController();
+	if (abortSignal) {
+		if (abortSignal.aborted) {
+			controller.abort();
+		} else {
+			abortSignal.addEventListener('abort', () => controller.abort(), { once: true });
+		}
+	}
+
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const response = await fetch(url, {
@@ -367,7 +375,7 @@ async function postJsonWithTimeout(url, body, timeoutMs) {
 	}
 }
 
-async function suggestViaBackend(document, position, config, logger) {
+async function suggestViaBackend(document, position, config, logger, abortSignal) {
 	if (!config.backendEnabled) {
 		return { contexts: [], completion: '', error: 'backend disabled' };
 	}
@@ -398,7 +406,7 @@ async function suggestViaBackend(document, position, config, logger) {
 		logger.info(beforeCursor);
 		logger.info('='.repeat(80));
 		
-		const response = await postJsonWithTimeout(config.backendSuggestUrl, body, config.backendRequestTimeoutMs);
+		const response = await postJsonWithTimeout(config.backendSuggestUrl, body, config.backendRequestTimeoutMs, abortSignal);
 		if (!response.ok || !response.payload?.ok) {
 			return {
 				contexts: [],
@@ -431,6 +439,9 @@ async function suggestViaBackend(document, position, config, logger) {
 			error: ''
 		};
 	} catch (error) {
+		if (error?.name === 'AbortError') {
+			return { contexts: [], completion: '', error: 'aborted' };
+		}
 		return { contexts: [], completion: '', error: error?.message || 'backend request failed' };
 	}
 }
@@ -442,9 +453,100 @@ function activate(context) {
 	const tokenIndex = new WorkspaceDataflowIndex();
 	const logger = createLogger();
 	const inlineCache = new Map();
-	const inFlightBackend = new Map();
+	const inFlightByEditor = new Map();
 
 	logger.info('Extension activated.');
+
+	const makeRequestKey = (documentUri, position) => `${documentUri.toString()}::${position.line}:${position.character}`;
+
+	const startCancelableBackendCompletion = (editor, position, reason) => {
+		if (!editor) {
+			return;
+		}
+		const config = getConfig();
+		if (!config.backendEnabled || !config.enableLmCompletion) {
+			return;
+		}
+
+		const editorId = editor.document.uri.toString();
+		const requestKey = makeRequestKey(editor.document.uri, position);
+
+		// cancel previous in-flight for this editor
+		const prev = inFlightByEditor.get(editorId);
+		if (prev?.controller && !prev.controller.signal.aborted) {
+			logger.info(`Cancel backend completion (cursorChanged) prevKey=${prev.requestKey}`);
+			prev.controller.abort();
+		}
+
+		const controller = new AbortController();
+		inFlightByEditor.set(editorId, { controller, requestKey, position });
+		logger.info(`Start backend completion (${reason}) key=${requestKey}`);
+
+		void (async () => {
+			const backendResult = await suggestViaBackend(editor.document, position, config, logger, controller.signal);
+			if (controller.signal.aborted) {
+				return;
+			}
+			if (backendResult.error) {
+				logger.info(`Backend suggest failed: ${backendResult.error}`);
+				return;
+			}
+			const lmText = backendResult.completion || '';
+			if (!lmText) {
+				return;
+			}
+
+			inlineCache.set(requestKey, lmText);
+
+			// Only apply/show if cursor hasn't moved
+			const active = vscode.window.activeTextEditor;
+			const stillHere = active
+				&& active.document.uri.toString() === editorId
+				&& active.selection.active.line === position.line
+				&& active.selection.active.character === position.character;
+
+			if (!stillHere) {
+				logger.info(`Backend result ignored (cursor moved) key=${requestKey}`);
+				return;
+			}
+
+			void vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+			void showCompletionDialog(editor.document, position, lmText, backendResult.contexts);
+		})().finally(() => {
+			const cur = inFlightByEditor.get(editorId);
+			if (cur && cur.requestKey === requestKey) {
+				inFlightByEditor.delete(editorId);
+			}
+		});
+	};
+
+	const onSelectionChanged = vscode.window.onDidChangeTextEditorSelection((event) => {
+		const editor = event.textEditor;
+		const editorId = editor.document.uri.toString();
+		const cur = inFlightByEditor.get(editorId);
+		if (!cur) {
+			return;
+		}
+		const pos = editor.selection.active;
+		if (pos.line === cur.position.line && pos.character === cur.position.character) {
+			return;
+		}
+		// cancel + restart using new cursor position
+		startCancelableBackendCompletion(editor, pos, 'cursorMoved');
+	});
+
+	const triggerCompletionCommand = vscode.commands.registerCommand('ai-code-complete.triggerCompletion', async () => {
+		logger.info('Crtl+Shift+Space Trigger!');
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			return;
+		}
+		logger.info('Crtl+Shift+Space Start');
+		const pos = editor.selection.active;
+		startCancelableBackendCompletion(editor, pos, 'manualHotkey');
+		logger.info('Crtl+Shift+Space Completed!');
+		// await vscode.commands.executeCommand('editor.action.triggerSuggest');
+	});
 
 	const syncBackendIndex = async (forceRebuild = false) => {
 		const config = getConfig();
@@ -509,8 +611,6 @@ function activate(context) {
 		logger.info(`Timestamp: ${new Date().toISOString()}`);
 		logger.info('='.repeat(80));
 		
-		const startTime = Date.now();
-		
 		await vscode.window.withProgress(
 			{ location: vscode.ProgressLocation.Notification, title: 'AI Code Complete: rebuilding index...' },
 			async () => {
@@ -525,11 +625,12 @@ function activate(context) {
 		{ scheme: 'file' },
 		{
 			async provideCompletionItems(document, position, _token, completionContext) {
+				// const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
 				const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
 				const prefix = range ? document.getText(range) : '';
-				if (!prefix || prefix.length < 2) {
-					return [];
-				}
+				// if (!prefix || prefix.length < 2) {
+				// 	return [];
+				// }
 
 				const triggerLabel = completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke
 					? 'manual (Ctrl+Space or API invoke)'
@@ -550,74 +651,37 @@ function activate(context) {
 					return item;
 				});
 
-				// Ctrl+Space / 手动触发时，优先尝试生成 LM 补全并展示
-					if (completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke) {
-						const requestKey = `${document.uri.toString()}::${position.line}:${position.character}`;
-
-						// 后端推理可能很慢（CPU 上 codegen-350M 常见 >20s），不要阻塞建议 UI。
-						// 即使有相同位置的请求在处理中，也允许新的请求触发
-						// 这样用户可以连续调用代码补全功能
-						const p = (async () => {
-							logger.info(`Starting new backend completion request: ${requestKey}`);
-							const backendResult = await suggestViaBackend(document, position, config, logger);
-							if (backendResult.error) {
-								logger.info(`Backend suggest failed: ${backendResult.error}`);
-								return;
-							}
-							const lmText = backendResult.completion;
-							const lmLen = lmText?.length || 0;
-							logger.info(`Backend completion received (background). chars=${lmLen}`);
-							if (lmLen > 0) {
-						inlineCache.set(requestKey, lmText);
-						logger.info(`LM completion ready (background). chars=${lmLen} contexts=${backendResult.contexts.length}`);
-						// 显示补全选择对话框
-						void showCompletionDialog(document, position, lmText, backendResult.contexts);
+				// Ctrl+Space / 手动触发时：发起“可取消”的后端补全请求（光标移动则自动取消并重启）
+				if (completionContext.triggerKind === vscode.CompletionTriggerKind.Invoke) {
+					const editor = vscode.window.activeTextEditor;
+					if (editor && editor.document.uri.toString() === document.uri.toString()) {
+						startCancelableBackendCompletion(editor, position, 'ctrlSpaceInvoke');
 					}
-						})().finally(() => {
-							// 无论成功失败，都从缓存中删除
-							inFlightBackend.delete(requestKey);
-							logger.info(`Backend request completed and removed from cache: ${requestKey}`);
-						});
-						// 立即添加到缓存，避免重复处理
-						inFlightBackend.set(requestKey, p);
 
-						// 尝试短等待：如果后端足够快，则把 LM 项也放进 Ctrl+Space 列表
-						const fastTimeoutMs = 3000;
-						let lmTextFast = '';
-						let timedOut = true;
-						await Promise.race([
-							inFlightBackend.get(requestKey).then(() => {
-								timedOut = false;
-								lmTextFast = inlineCache.get(requestKey) || '';
-							}),
-							new Promise((resolve) => setTimeout(resolve, fastTimeoutMs))
-						]);
-
-						if (!timedOut && lmTextFast.length === 0) {
-							logger.info('Backend finished quickly, but completion was empty.');
-						}
-
-						if (lmTextFast) {
-							const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
-							lmItem.sortText = '0000';
-							lmItem.insertText = lmTextFast;
-							lmItem.detail = 'Generated from backend (dataflow) context';
-							lmItem.documentation = new vscode.MarkdownString([
-								'**Dataflow Retrieved Context**',
-								'',
-								'```',
-								buildContextBlock(snippets).slice(0, 4000),
-								'```',
-								'',
-								'**Inferred completion**',
-								'',
-								'```',
-								lmTextFast,
-								'```'
-							].join('\n'));
-							result.unshift(lmItem);
-						}
+					// 如果当前光标位置已有缓存结果，则直接把 LM 项放进列表（无需等待后端）
+					const requestKey = makeRequestKey(document.uri, position);
+					const cached = inlineCache.get(requestKey) || '';
+					if (cached) {
+						const lmItem = new vscode.CompletionItem('LM: inferred completion', vscode.CompletionItemKind.Snippet);
+						lmItem.sortText = '0000';
+						lmItem.insertText = cached;
+						lmItem.detail = 'Generated from backend (dataflow) context';
+						lmItem.documentation = new vscode.MarkdownString([
+							'**Dataflow Retrieved Context**',
+							'',
+							'```',
+							buildContextBlock(snippets).slice(0, 4000),
+							'```',
+							'',
+							'**Inferred completion**',
+							'',
+							'```',
+							cached,
+							'```'
+						].join('\n'));
+						result.unshift(lmItem);
 					}
+				}
 
 				return result;
 			}
@@ -641,6 +705,9 @@ function activate(context) {
 			}
 		}
 	);
+
+	// Keep inline provider alive
+	context.subscriptions.push(inlineProvider);
 
 	const onSave = vscode.workspace.onDidSaveTextDocument(async (document) => {
 		if (document.uri.scheme !== 'file') {
@@ -696,7 +763,7 @@ function activate(context) {
 	// 清除所有预览装饰器和建议的辅助函数
 	const clearAllPreviews = () => {
 		// 清除所有装饰器
-		for (const [key, { decorationType, editor }] of decorationTypes.entries()) {
+		for (const [, { decorationType, editor }] of decorationTypes.entries()) {
 			editor.setDecorations(decorationType, []);
 			decorationType.dispose();
 		}
@@ -715,8 +782,8 @@ function activate(context) {
 		if (!editor) return;
 
 		const position = editor.selection.active;
-		const key = `${editor.document.uri.toString()}`;
-		const suggestions = completionSuggestions.get(key) || [];
+		const docKey = editor.document.uri.toString();
+		const suggestions = completionSuggestions.get(docKey) || [];
 		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
 
 		if (suggestion) {
@@ -738,8 +805,8 @@ function activate(context) {
 		}
 
 		const position = editor.selection.active;
-		const key = `${editor.document.uri.toString()}`;
-		const suggestions = completionSuggestions.get(key) || [];
+		const docKey = editor.document.uri.toString();
+		const suggestions = completionSuggestions.get(docKey) || [];
 		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
 
 		if (suggestion) {
@@ -762,8 +829,8 @@ function activate(context) {
 		if (!editor) return;
 
 		const position = editor.selection.active;
-		const key = `${editor.document.uri.toString()}`;
-		const suggestions = completionSuggestions.get(key) || [];
+		const docKey = editor.document.uri.toString();
+		const suggestions = completionSuggestions.get(docKey) || [];
 		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
 
 		if (suggestion) {
@@ -863,6 +930,8 @@ function activate(context) {
 	context.subscriptions.push(
 		refreshIndexCommand, 
 		provider, 
+		triggerCompletionCommand,
+		onSelectionChanged,
 		applyCompletionCommand,
 		viewContextCommand,
 		cancelCompletionCommand,
