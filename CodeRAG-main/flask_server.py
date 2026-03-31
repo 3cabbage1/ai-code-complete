@@ -356,8 +356,16 @@ def suggest() -> Any:
         project_name = STATE.get("project_name")
         file_path_abs = str(file_path)
 
-        # 1) Build query from source code (CodeRAG-main/scripts/build_query.py)
-        #    For interactive completion, we use last_k lines.
+        # 0) 读取整文件源码，用于构建 dataflow 图
+        try:
+            with open(file_path_abs, "r", encoding="utf-8") as f:
+                full_source = f.read()
+        except UnicodeDecodeError:
+            with open(file_path_abs, "r", encoding="utf-8", errors="ignore") as f:
+                full_source = f.read()
+
+        # 1) Build query from *context code* (靠近光标的前后片段)，更贴近 CodeRAG 的 code_context 语义
+        # VS Code 传来的 source_code 是「光标前代码」，这里在其基础上做 last_k 裁剪。
         query_list = build_query_by_last_k_lines([source_code], k=settings.query.lask_k)
         query = query_list[0] if query_list else source_code
         
@@ -368,7 +376,8 @@ def suggest() -> Any:
         logger.info("=" * 80)
 
         # 2) Dataflow retrieval context (CodeRAG-main/scripts/retrieve.py)
-        #    The truncation decision uses merge_retrieval's token logic, same as retrieve.py.
+        #    - dataflow 图用整文件 full_source 构建（更容易看到 import / 跨文件关系）
+        #    - query 只作为「当前问题位置的上下文」参与提示词构建
         rel_file = os.path.relpath(file_path_abs, workspace_path)
         rel_file_norm = rel_file.replace("\\", "/")
         source_code_prefix = f"# {rel_file_norm}"
@@ -385,19 +394,22 @@ def suggest() -> Any:
         logger.info("=" * 80)
 
         def calc_truncated(retrieval_infos: list[str]) -> bool:
-            # merge_retrieval returns: (prompt, source_code_truncated, retrieval_truncated)
-            return merge_retrieval(
+            # merge_retrieval 返回: (prompt, source_code_truncated, retrieval_truncated)
+            # 这里只关心「检索信息是否被截断」，与 CodeRAG scripts 保持一致。
+            _prompt, _source_truncated, retrieval_truncated = merge_retrieval(
                 retrieval_infos=retrieval_infos,
                 source_code_prefix=source_code_prefix,
                 source_code=query,
                 tokenizer=tokenizer,
-            )[1]
+            )
+            return retrieval_truncated
 
         logger.info("Starting dataflow retrieval...")
         prompt_list = retriever.retrieve(
             project_name=project_name,
             fpath=Path(file_path_abs),
-            source_code=query,
+            # 使用整文件源码构建 DFG，保证能看到文件顶部的 import / 类 / 函数定义
+            source_code=full_source,
             calc_truncated=calc_truncated,
         )
         logger.info(f"Dataflow retrieval completed. Retrieved {len(prompt_list or [])} contexts.")
