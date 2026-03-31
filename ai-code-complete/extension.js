@@ -767,8 +767,8 @@ function activate(context) {
 		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
 
 		if (suggestion) {
-			const contextText = suggestion.contexts.map((ctx, idx) => `--- Context ${idx + 1} ---
-${ctx}`).join('\n\n');
+			const contextText = suggestion.contexts.map((ctx, idx) => `<h3>${idx + 1}. Context ${idx + 1} </h3>
+<p>${ctx}</p>`).join('\n\n');
 			const panel = vscode.window.createWebviewPanel(
 				'codeCompleteContext',
 				'AI Code Complete Context',
@@ -782,8 +782,10 @@ ${ctx}`).join('\n\n');
 					<meta charset="UTF-8">
 					<title>AI Code Complete Context</title>
 					<style>
-						body { font-family: monospace; white-space: pre-wrap; padding: 10px; }
-						.context { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; }
+						body { font-family: monospace; white-space: pre-wrap; padding: 2px; }
+						.context { margin-bottom: 5px; padding: 2px; border: 1px solid #ddd; }
+						/*title,h2,h3{text-align: center;}*/
+						title,h2,h3,p{margin-left: 10px;}
 					</style>
 				</head>
 				<body>
