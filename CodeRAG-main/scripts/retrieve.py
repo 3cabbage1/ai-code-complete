@@ -7,7 +7,7 @@ from coderag.benchmark.methods import load_benchmark
 from coderag.retrieve.dataflow_retrieve import DataflowRetriever
 from coderag.retrieve.common import RetrieveResultItem, RetrieveResult
 from coderag.build_prompt.merge_retrieval import get_tokenizer, merge_retrieval
-
+from coderag.retrieve.methods import  retrieve_code_snippets_sparse
 
 def main():
     retrieve_settings = settings.retrieve
@@ -24,11 +24,31 @@ def main():
         benchmark.data_list = benchmark.data_list[:sample_n]
         querys = querys[:sample_n]
     benchmark_count = len(benchmark.data_list)
+    # sparse retrieval
+    sparse_retrieval: list[list[str]]= []
+    if retrieve_settings.sparse.enable:
+        logger.info("Using sparse retrieval...")
+        count = 0
+        for query, benchmark_item in zip(querys, benchmark.data_list):
+            repo_path = benchmark.get_repo(benchmark_item.repo_name).repo_path
+            result = retrieve_code_snippets_sparse(
+                repo_path=repo_path,
+                query=query,
+                k_func=5,
+                k_var=5,
+                method=settings.retrieve.sparse.method,
+                exclude_path=benchmark_item.file_path,
+            )
+            sparse_retrieval.append(result)
+            logger.debug(
+                f"Sparse retrieving {count}/{benchmark_count} done, repo: {benchmark_item.repo_name}, query: {query}"
+            )
+            count += 1
 
     dataflow_retrieval: List[List[str]]= []
     if retrieve_settings.dataflow.enable:
         tokenizer = get_tokenizer(settings.build_prompt.tokenizer_path_or_name)
-
+        
         logger.info("Using dataflow retrieval...")
         dataflow_retriever = DataflowRetriever(
             projs_dir=settings.benchmark.repos_path,
@@ -59,12 +79,18 @@ def main():
         data_list=[]
     )
     for i in range(len(querys)):
+        if settings.retrieve.sparse.enable:
+            sparse_it = sparse_retrieval[i]
+        else:
+            sparse_it = None
         if settings.retrieve.dataflow.enable:
             dataflow_it = dataflow_retrieval[i]
         else:
             dataflow_it = None
         result.data_list.append(
             RetrieveResultItem(
+                sparse=sparse_it,
+                dense=dense_it,
                 dataflow=dataflow_it
             )
         )

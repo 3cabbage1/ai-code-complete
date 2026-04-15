@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, request as flask_request
 
@@ -14,6 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, 
 from coderag.config import settings
 from coderag.build_query.build_query import build_query_by_last_k_lines
 from coderag.retrieve.dataflow_retrieve import DataflowRetriever
+from coderag.retrieve.methods import retrieve_code_snippets_sparse
 from coderag.build_prompt.merge_retrieval import get_tokenizer, merge_retrieval
 # 直接使用 projectParser 解析当前项目，绕过 generate_context_graph
 from coderag.static_analysis.data_flow.preprocess import projectParser
@@ -43,6 +45,27 @@ def _calc_truncated_factory(max_chars: int) -> Callable[[list[str]], bool]:
         return total > max_chars
 
     return calc_truncated
+
+
+def normalize(scores: list[float]) -> list[float]:
+    if not scores:
+        return []
+    min_s = min(scores)
+    max_s = max(scores)
+    return [(s - min_s) / (max_s - min_s + 1e-8) for s in scores]
+
+
+def build_norm_score_map(docs: list[str]) -> dict[str, float]:
+    if not docs:
+        return {}
+    # Use rank position as raw score since retrieval output has no explicit score.
+    raw_scores = [float(len(docs) - idx) for idx in range(len(docs))]
+    norm_scores = normalize(raw_scores)
+    return {doc: score for doc, score in zip(docs, norm_scores, strict=True)}
+
+
+def normalize_doc_key(doc: str) -> str:
+    return doc.strip()
 
 
 def ensure_retriever(workspace_path: str, force_rebuild: bool = False) -> DataflowRetriever:
@@ -218,6 +241,20 @@ def ensure_lm_loaded() -> tuple[Any, Any, Any, Any]:
         torch_dtype=dtype,
         device_map="auto" if use_cuda else None,
     )
+    
+    # 添加模型量化以提高推理速度
+    if use_cuda:
+        # 对于GPU，使用半精度推理
+        model.half()
+    else:
+        # 对于CPU，使用INT8量化
+        from torch.quantization import quantize_dynamic
+        model = quantize_dynamic(
+            model,
+            {torch.nn.Linear},
+            dtype=torch.qint8
+        )
+    
     model.eval()
     if not use_cuda:
         model.to(device)
@@ -277,13 +314,20 @@ def local_infer_completion(prompt: str, max_tokens: int | None = None) -> str:
     # Use a fresh stopping criteria instance per request so it can reset state.
     stopping_criteria = StoppingCriteriaList([StopOnNewlineCriteria(tokenizer, min_new_tokens=2)])
 
+    # 优化推理参数以提高速度
     output_ids = model.generate(
         **inputs,
-        max_new_tokens=max_new_tokens,
+        max_new_tokens=min(max_new_tokens, 1028),  # 限制生成的token数量
         do_sample=False,
         temperature=0.0,
         pad_token_id=tokenizer.eos_token_id,
         stopping_criteria=stopping_criteria,
+        # 添加额外的优化参数
+        use_cache=True,  # 启用缓存
+        # 对于某些模型，添加以下参数可能会提高速度
+        # num_return_sequences=1,
+        # top_k=50,
+        # top_p=0.95,
     )
 
     prompt_len = inputs["input_ids"].shape[-1]
@@ -404,27 +448,98 @@ def suggest() -> Any:
             )
             return retrieval_truncated
 
-        logger.info("Starting dataflow retrieval...")
-        prompt_list = retriever.retrieve(
-            project_name=project_name,
-            fpath=Path(file_path_abs),
-            # 使用整文件源码构建 DFG，保证能看到文件顶部的 import / 类 / 函数定义
-            source_code=full_source,
-            calc_truncated=calc_truncated,
-        )
-        logger.info(f"Dataflow retrieval completed. Retrieved {len(prompt_list or [])} contexts.")
+        # 并行执行 Dataflow 和 BM25 检索
+        logger.info("Starting parallel retrieval (Dataflow + BM25)...")
+        
+        def run_dataflow_retrieval():
+            logger.info("Starting dataflow retrieval...")
+            result = retriever.retrieve(
+                project_name=project_name,
+                fpath=Path(file_path_abs),
+                # 使用整文件源码构建 DFG，保证能看到文件顶部的 import / 类 / 函数定义
+                source_code=full_source,
+                calc_truncated=calc_truncated,
+            )
+            logger.info(f"Dataflow retrieval completed. Retrieved {len(result or [])} contexts.")
+            return result
+        
+        def run_bm25_retrieval():
+            logger.info("Starting BM25 retrieval...")
+            result = retrieve_code_snippets_sparse(
+                repo_path=Path(workspace_path),
+                query=query,
+                k_func=5,
+                k_var=5,
+                method="bm25",
+                exclude_path=Path(file_path_abs),
+                tokenizer=lambda text: text.split()
+            )
+            logger.info(f"BM25 retrieval completed. Retrieved {len(result or [])} contexts.")
+            return result
+        
+        # 使用线程池并行执行
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_dataflow = executor.submit(run_dataflow_retrieval)
+            future_bm25 = executor.submit(run_bm25_retrieval)
+            
+            # 获取结果
+            prompt_list = future_dataflow.result()
+            bm25_results = future_bm25.result()
+        
+        logger.info("Parallel retrieval completed.")
 
         logger.info("=" * 80)
-        logger.info(f"RETRIEVED CONTEXTS (count: {len(prompt_list or [])}):")
+        logger.info(f"RETRIEVED CONTEXTS (Dataflow: {len(prompt_list or [])}, BM25: {len(bm25_results or [])}):")
         logger.info("=" * 80)
         for idx, ctx in enumerate(prompt_list or [], 1):
-            logger.info(f"--- Context {idx} ---")
+            logger.info(f"--- Dataflow Context {idx} ---")
+            logger.info(ctx)
+        for idx, ctx in enumerate(bm25_results or [], 1):
+            logger.info(f"--- BM25 Context {idx} ---")
+            logger.info(ctx)
+        logger.info("=" * 80)
+
+        # 4) Rerank and fuse results
+        logger.info("Starting reranking and fusing results...")
+        alpha = 0.5  # Weight for BM25, (1-alpha) for dataflow
+        top_k = 10  # Top k results to keep
+
+        # Build score maps
+        bm25_score_map = build_norm_score_map(bm25_results or [])
+        dataflow_score_map = build_norm_score_map(prompt_list or [])
+
+        # Fuse results
+        fused_by_doc: dict[str, tuple[str, float]] = {}
+        for doc in (bm25_results or []) + (prompt_list or []):
+            score_bm25 = bm25_score_map.get(doc, 0.0)
+            score_dataflow = dataflow_score_map.get(doc, 0.0)
+            final_score = alpha * score_bm25 + (1 - alpha) * score_dataflow
+            key = normalize_doc_key(doc)
+            old = fused_by_doc.get(key)
+            # Deduplicate by normalized text and keep the higher fused score
+            if old is None or final_score > old[1]:
+                fused_by_doc[key] = (doc, final_score)
+
+        # Sort by score
+        fused = list(fused_by_doc.values())
+        fused.sort(key=lambda x: x[1], reverse=True)
+
+        # Get top k results
+        top_docs = fused[:min(top_k, len(fused))]
+        reranked_results = [doc for doc, _ in top_docs]
+
+        logger.info(f"Reranking completed. Kept top {len(reranked_results)} results.")
+        logger.info("=" * 80)
+        logger.info("RERANKED CONTEXTS:")
+        logger.info("=" * 80)
+        for idx, ctx in enumerate(reranked_results, 1):
+            logger.info(f"--- Reranked Context {idx} ---")
             logger.info(ctx)
         logger.info("=" * 80)
 
         # 3) Build final prompt (CodeRAG-main/scripts/build_prompt.py)
         retrieval_prompts: list[str] = []
-        for item in (prompt_list or []):
+        for item in reranked_results:
             retrieval_prompts.append(item.replace("'''", '"""'))
 
         user_prompt, _retrieval_truncated, _source_code_truncated = merge_retrieval(
