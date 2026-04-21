@@ -9,7 +9,7 @@
    ```
 ### 3. **Activate the virtual environment**
    ```bash
-   source .venv/bin/activate
+  .venv\Scripts\Activate.ps1   
    ```
 
 ---
@@ -53,4 +53,9 @@ python scripts/inference.py
   **Input:** JSON file containing an array of strings  
   **Output:** JSON file containing an array of generated completions.
 
-
+@inproceedings{coderag2025,
+  title={CodeRAG: Finding Relevant and Necessary Knowledge for Retrieval-Augmented Repository-Level Code Completion},
+  author={Sheng Zhang, Yifan Ding, Shuquan Lian, Shun Song, Hui Li},
+  booktitle={Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing (EMNLP)},
+  year={2025}
+}
