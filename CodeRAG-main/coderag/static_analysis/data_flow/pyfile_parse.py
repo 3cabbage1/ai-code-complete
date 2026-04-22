@@ -41,7 +41,7 @@ class astVisiter(object):
 
 
     def _get_code(self, start_pos, end_pos):
-        return self.source_code[start_pos:end_pos].decode('utf-8', errors='ignore')
+        return self.source_code[start_pos:end_pos].decode('utf-8', errors='replace')
 
 
     def _save_import_info(self, stat, lineno, module, name=None, alias=None):
@@ -78,7 +78,7 @@ class astVisiter(object):
             p = children[0]
 
         if has_docsting:
-            return p.text.decode('utf-8', errors='ignore')
+            return p.text.decode('utf-8', errors='replace')
         
         return None
 
@@ -175,7 +175,7 @@ class astVisiter(object):
         variables = set()
 
         lineno = node.start_point[0]
-        stat = node.text.decode('utf-8', errors='ignore')
+        stat = node.text.decode('utf-8', errors='replace')
 
         p = node
         while p and p.type == 'assignment':
@@ -389,11 +389,13 @@ class astVisiter(object):
 
 
     def visit_root(self, root):
-        # Module is recorded as ""
-        self.node_info[""] = {"type": "Module"}
+        # Module is recorded with a proper key - use a module marker instead of empty string
+        # This prevents empty keys in the node_info dictionary
+        module_key = "__module__"
+        self.node_info[module_key] = {"type": "Module"}
         docstring = self._get_docsting(root)
         if docstring:
-            self.node_info[""]["docstring"] = docstring
+            self.node_info[module_key]["docstring"] = docstring
 
         # global info
         decorated_info = None
@@ -427,7 +429,7 @@ class astVisiter(object):
                     )
                 )
                 '''
-                stat = node.text.decode('utf-8', errors='ignore')
+                stat = node.text.decode('utf-8', errors='replace')
                 lineno = node.start_point[0]
 
                 children = node.children
@@ -443,7 +445,7 @@ class astVisiter(object):
                     $._import_list
                 )
                 '''
-                stat = node.text.decode('utf-8', errors='ignore')
+                stat = node.text.decode('utf-8', errors='replace')
                 lineno = node.start_point[0]
 
                 children = node.children
@@ -468,7 +470,7 @@ class astVisiter(object):
                     )
                 )
                 '''
-                stat = node.text.decode('utf-8', errors='ignore')
+                stat = node.text.decode('utf-8', errors='replace')
                 lineno = node.start_point[0]
 
                 module = node.child_by_field_name('module_name').text.decode()

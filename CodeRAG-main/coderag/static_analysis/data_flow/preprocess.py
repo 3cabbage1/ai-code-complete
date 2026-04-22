@@ -119,6 +119,8 @@ class projectParser(object):
             for item in os.listdir(py_dir):
                 fpath = os.path.join(py_dir, item)
                 if os.path.isdir(fpath):
+                    if item == '.ai-code-complete':
+                        continue
                     if re.search(self.iden_pattern, item) is None:
                         dir_list.append(fpath)
                         py_dict[py_dir].add(fpath)
@@ -202,7 +204,8 @@ class projectParser(object):
                     # dir
                     for item in py_dict[fpath]:
                         submodule = self._get_module_name(item)
-                        if submodule != module:
+                        # Only add module entries if submodule name is not empty and different from current module
+                        if submodule and submodule != module:
                             # exclude __init__.py
                             info_dict[submodule] = {
                                 "type": "Module",
@@ -210,7 +213,9 @@ class projectParser(object):
                             }
                 else:
                     # pyfiles
-                    info_dict.update(self.py_parser.parse(fpath))
+                    parsed_info = self.py_parser.parse(fpath)
+                    # Filter out empty keys that might be generated from module-level parsing
+                    info_dict.update({k: v for k, v in parsed_info.items() if k})
                     break
             
             if len(info_dict) > 0:
@@ -254,7 +259,7 @@ def generate_context_graph(pkg_list: list[str], ds_repo_dir: Path, ds_graph_dir:
                 dist_path = content[0]
                 info = project_parser.parse_dir(str(dist_path))
 
-            with open(ds_graph_dir / f'{item}.json', 'w') as f:
-                json.dump(info, f)
+            with open(ds_graph_dir / f'{item}.json', 'w', encoding='utf-8') as f:
+                json.dump(info, f, ensure_ascii=False, indent=2)
 
     logger.info(f'Generated repo-specific context graphs for {len(list(ds_graph_dir.iterdir()))} repositories.')

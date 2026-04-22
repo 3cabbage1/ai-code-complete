@@ -17,7 +17,7 @@
     "commands": [
       {
         "command": "ai-code-complete.rebuildIndex",
-        "title": "AI Code Complete: Rebuild Workspace Index"
+        "title": "AI Code Complete: Rebuild Workspace DFG"
       },
       {
         "command": "ai-code-complete.triggerCompletion",

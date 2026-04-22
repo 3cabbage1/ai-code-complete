@@ -115,7 +115,7 @@ class WorkspaceDataflowIndex {
 
 	async rebuild(logger) {
 		if (this.isBuilding) {
-			logger?.info('Index rebuild skipped because another rebuild is running.');
+			logger?.info('DFG rebuild skipped because another rebuild is running.');
 			return;
 		}
 
@@ -123,7 +123,7 @@ class WorkspaceDataflowIndex {
 		try {
 			this.clear();
 			const config = getConfig();
-			logger?.info(`Index rebuild started. include=${config.includeGlob} exclude=${config.excludeGlob} maxFiles=${config.maxFiles}`);
+			logger?.info(`DFG rebuild started. include=${config.includeGlob} exclude=${config.excludeGlob} maxFiles=${config.maxFiles}`);
 			const files = await vscode.workspace.findFiles(
 				config.includeGlob,
 				config.excludeGlob,
@@ -611,13 +611,13 @@ function activate(context) {
 		logger.info('='.repeat(80));
 		
 		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'AI Code Complete: rebuilding index...' },
+			{ location: vscode.ProgressLocation.Notification, title: 'AI Code Complete: rebuilding DFG...' },
 			async () => {
 				await tokenIndex.rebuild(logger);
 				await syncBackendIndex(true);
 			}
 		);
-		vscode.window.showInformationMessage('AI Code Complete: index rebuilt.');
+		vscode.window.showInformationMessage('AI Code Complete: DFG rebuilt.');
 	});
 
 	const provider = vscode.languages.registerCompletionItemProvider(

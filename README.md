@@ -217,16 +217,7 @@ npm test
 - 配置文件：`CodeRAG-main/config/config.toml`
 - 脚本目录：`CodeRAG-main/scripts/`
 
-CodeRAG 原始脚本链路大致为：
-
-```bash
-python scripts/build_query.py
-python scripts/retrieve.py
-python scripts/build_prompt.py
-python scripts/inference.py
-```
-
-不过在当前仓库集成方式下，VS Code 扩展通常直接通过 Flask API 调用后端，不需要手动逐个执行这些脚本。
+在当前仓库集成方式下，VS Code 扩展通常直接通过 Flask API 调用后端。
 
 ## 当前限制
 
