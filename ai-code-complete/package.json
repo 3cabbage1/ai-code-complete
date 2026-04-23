@@ -17,7 +17,7 @@
     "commands": [
       {
         "command": "ai-code-complete.rebuildIndex",
-        "title": "AI Code Complete: Rebuild Workspace DFG"
+        "title": "AI Code Complete: Rebuild Workspace index"
       },
       {
         "command": "ai-code-complete.triggerCompletion",
@@ -25,17 +25,17 @@
       },
       {
         "command": "ai-code-complete.applyCompletion",
-        "title": "Apply Completion (ai-code-complete)",
+        "title": "插入（智能代码补全系统）",
         "icon": "$(check)"
       },
       {
         "command": "ai-code-complete.viewContext",
-        "title": "View Context (ai-code-complete)",
+        "title": "查看上下文（智能代码补全系统）",
         "icon": "$(eye)"
       },
       {
         "command": "ai-code-complete.cancelCompletion",
-        "title": "Cancel (ai-code-complete)",
+        "title": "取消（智能代码补全系统）",
         "icon": "$(close)"
       }
     ],

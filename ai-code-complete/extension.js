@@ -115,7 +115,7 @@ class WorkspaceDataflowIndex {
 
 	async rebuild(logger) {
 		if (this.isBuilding) {
-			logger?.info('DFG rebuild skipped because another rebuild is running.');
+			logger?.info('Index rebuild skipped because another rebuild is running.');
 			return;
 		}
 
@@ -123,7 +123,7 @@ class WorkspaceDataflowIndex {
 		try {
 			this.clear();
 			const config = getConfig();
-			logger?.info(`DFG rebuild started. include=${config.includeGlob} exclude=${config.excludeGlob} maxFiles=${config.maxFiles}`);
+			logger?.info(`Index rebuild started. include=${config.includeGlob} exclude=${config.excludeGlob} maxFiles=${config.maxFiles}`);
 			const files = await vscode.workspace.findFiles(
 				config.includeGlob,
 				config.excludeGlob,
@@ -611,13 +611,13 @@ function activate(context) {
 		logger.info('='.repeat(80));
 		
 		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'AI Code Complete: rebuilding DFG...' },
+			{ location: vscode.ProgressLocation.Notification, title: '智能代码补全系统: 文件解析中...' },
 			async () => {
 				await tokenIndex.rebuild(logger);
 				await syncBackendIndex(true);
 			}
 		);
-		vscode.window.showInformationMessage('AI Code Complete: DFG rebuilt.');
+		vscode.window.showInformationMessage('智能代码补全系统: 文件解析完成。');
 	});
 
 	const provider = vscode.languages.registerCompletionItemProvider(
@@ -791,7 +791,7 @@ function activate(context) {
 				editBuilder.insert(position, suggestion.completion);
 			});
 			logger.info('Completion applied by user');
-
+			vscode.window.showInformationMessage('智能代码补全系统: 插入补全建议。');
 			// 清除所有预览装饰器和建议
 			clearAllPreviews();
 		}
@@ -815,7 +815,7 @@ function activate(context) {
 				editBuilder.insert(position, suggestion.completion);
 			});
 			logger.info('Completion applied via Tab key');
-
+			vscode.window.showInformationMessage('智能代码补全系统: 插入补全建议。');
 			// 清除所有预览装饰器和建议
 			clearAllPreviews();
 		} else {
@@ -834,11 +834,11 @@ function activate(context) {
 		const suggestion = suggestions.find(s => s.line === position.line && s.character === position.character);
 
 		if (suggestion) {
-			const contextText = suggestion.contexts.map((ctx, idx) => `<h3>${idx + 1}. Context ${idx + 1} </h3>
+			const contextText = suggestion.contexts.map((ctx, idx) => `<h3>${idx + 1}. 检索上下文 ${idx + 1} </h3>
 <p>${ctx}</p>`).join('\n\n');
 			const panel = vscode.window.createWebviewPanel(
 				'codeCompleteContext',
-				'AI Code Complete Context',
+				'智能代码补全系统检索上下文',
 				vscode.ViewColumn.Beside,
 				{ enableScripts: false }
 			);
@@ -847,7 +847,7 @@ function activate(context) {
 				<html>
 				<head>
 					<meta charset="UTF-8">
-					<title>AI Code Complete Context</title>
+					<title>智能代码补全系统检索上下文</title>
 					<style>
 						body { font-family: monospace; white-space: pre-wrap; padding: 2px; }
 						.context { margin-bottom: 5px; padding: 2px; border: 1px solid #ddd; }
@@ -856,12 +856,13 @@ function activate(context) {
 					</style>
 				</head>
 				<body>
-					<h2>Context Used for Completion</h2>
+					<h2>智能代码补全系统检索上下文</h2>
 					${contextText.replace(/\n/g, '<br>')}
 				</body>
 				</html>
 			`;
 			logger.info('Context view opened by user');
+			vscode.window.showInformationMessage('智能代码补全系统: 显示上下文。');
 		}
 	});
 
@@ -869,6 +870,7 @@ function activate(context) {
 		// 清除所有预览装饰器和建议
 		clearAllPreviews();
 		logger.info('Completion cancelled by user');
+		vscode.window.showInformationMessage('智能代码补全系统: 取消补全建议。');
 	});
 
 	// 显示补全建议
@@ -904,7 +906,7 @@ function activate(context) {
 
 			const decorations = [{
 				range: new vscode.Range(position, position),
-				hoverMessage: 'AI Code Complete Suggestion'
+				hoverMessage: '智能代码补全系统建议'
 			}];
 
 			editor.setDecorations(decorationType, decorations);
